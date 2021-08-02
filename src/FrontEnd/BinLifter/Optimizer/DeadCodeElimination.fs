@@ -122,16 +122,6 @@ let rec optimizeLoop (stmts: Stmt []) (used: bool []) idx len ctxt =
         let ctxt = updateOut rs ctxt
         let ctxt = updateUse (AST.getExprInfo rhs) ctxt
         optimizeLoop stmts used (idx - 1) len ctxt
-    | Put ({ E = TempVar (_, n) }, rhs) ->
-      let isUsed = Set.contains n ctxt.UseTempVar
-      let ctxt = if isUsed then removeTempUse n ctxt else ctxt
-      if not isUsed && (ctxt.IsLastBlock || Set.contains n ctxt.OutTempVar) then
-        used.[idx] <- false
-        optimizeLoop stmts used (idx - 1) (len - 1) ctxt
-      else
-        let ctxt = updateTempOut n ctxt
-        let ctxt = updateUse (AST.getExprInfo rhs) ctxt
-        optimizeLoop stmts used (idx - 1) len ctxt
     | LMark _ ->
       optimizeLoop stmts used (idx - 1) len { ctxt with IsLastBlock = false }
     | ISMark _ ->
