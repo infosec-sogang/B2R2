@@ -31,6 +31,7 @@ open B2R2.BinIR.LowUIR
 open B2R2.MiddleEnd.BinGraph
 open System.Collections.Generic
 open System.Runtime.InteropServices
+open AnalysisHelper
 
 /// <summary>
 ///   BinEssence is the main corpus of binary, which contains all the essential
@@ -74,6 +75,9 @@ open System.Runtime.InteropServices
 type BinEssence = {
   BinHandle: BinHandle
   InstrMap: InstrMap
+  InStateMap: StateMap
+  OutStateMap: StateMap
+  StackLiftInfo: StackLiftInfo
   BBLStore: BBLStore
   CalleeMap: CalleeMap
   SCFG: DiGraph<IRBasicBlock, CFGEdgeKind>
@@ -142,7 +146,7 @@ with
         let childPp =
           if child.VData.IsFakeBlock () then ProgramPoint.GetFake ()
           else child.VData.PPoint
-        let fake = IRBasicBlock ([||], childPp)
+        let fake = IRBasicBlock ([||], childPp, 0UL)
         let child, newGraph = DiGraph.addVertex newGraph fake
         let newGraph = DiGraph.addEdge newGraph parent child e
         if __.IsNoReturn parent true then newGraph
@@ -159,7 +163,7 @@ with
       | InterJmpEdge ->
         if __.CalleeMap.Contains child.VData.PPoint.Address then
           let childPp = child.VData.PPoint
-          let fake = IRBasicBlock ([||], childPp)
+          let fake = IRBasicBlock ([||], childPp, 0UL)
           let child, newGraph = DiGraph.addVertex newGraph fake
           DiGraph.addEdge newGraph parent child CallEdge
         else
@@ -277,12 +281,13 @@ module BinEssence =
 
   let splitIRBBlock g targetV (splitPoint: ProgramPoint) =
     let insInfos = (targetV: Vertex<IRBasicBlock>).VData.GetInsInfos ()
+    let func = targetV.VData.Entry
     let srcInfos, dstInfos =
       insInfos
       |> Array.partition (fun insInfo ->
         insInfo.Instruction.Address < splitPoint.Address)
-    let srcBlk = IRBasicBlock (srcInfos, targetV.VData.PPoint)
-    let dstBlk = IRBasicBlock (dstInfos, splitPoint)
+    let srcBlk = IRBasicBlock (srcInfos, targetV.VData.PPoint, func)
+    let dstBlk = IRBasicBlock (dstInfos, splitPoint, func)
     let src, g = DiGraph.addVertex g srcBlk
     let dst, g = DiGraph.addVertex g dstBlk
     let g = DiGraph.addEdge g src dst FallThroughEdge
@@ -413,17 +418,18 @@ module BinEssence =
        happens in obfuscated code. *)
     else gatherBB acc instrMap blkRange leaders ppoint (nextIdx + 1)
 
-  let private createNode instrMap blkRange leaders bbls idx leader =
+  let private createNode instrMap func blkRange leaders bbls idx leader =
     match bbls with
     | Ok bbls ->
       let instrs = gatherBB [] instrMap blkRange leaders leader (idx + 1)
       if Array.isEmpty instrs then Error ()
-      else Ok (IRBasicBlock (instrs, leader) :: bbls)
+      else Ok (IRBasicBlock (instrs, leader, func) :: bbls)
     | _ -> Error ()
 
-  let private buildVertices instrMap bblInfo =
+  let private buildVertices instrMap func bblInfo =
     let leaders = Set.toArray bblInfo.IRLeaders
-    Array.foldi (createNode instrMap bblInfo.BlkRange leaders) (Ok []) leaders
+    leaders
+    |> Array.foldi (createNode instrMap func bblInfo.BlkRange leaders) (Ok [])
     |> fst
 
   let getIntraEdge src symbol edgeProp edges =
@@ -481,10 +487,45 @@ module BinEssence =
         ProgramPoint (last.Address + uint64 last.Length, 0)
       else Set.minElement bigger
 
+  let private updateStackLift (src: Vertex<IRBasicBlock>) state ess =
+    let func = src.VData.Entry
+    match State.tryResolveStackPtr state with
+    | Some x ->
+      // For most inlined functions, we observe SP <= 0x20.
+      if x > EVM_WORDSIZE then
+        printfn "[Warning] Unusual stack lift (%s) of %x" (bigIntToStr x) func
+      StackLiftInfo.update func x ess.StackLiftInfo
+    | None -> printfn "[Warning] Unresolved stack lift of %x" func
+
+  let private resolveVarEdgeWithState addr src tmpNo isCjmp state ess edges =
+    match State.readTempVar tmpNo state with
+    // Unresolved register is likely to indicate the end of an inlined function.
+    | Unknown | CmpWith _ -> updateStackLift src state ess; (ess, edges)
+    | Fixed i ->
+      let targ = uint64 i
+      if isCjmp then ess, getInterEdge src targ InterCJmpTrueEdge edges
+      elif State.isInlineCall addr state then
+        let calleeMap = ess.CalleeMap.AddEntry targ
+        let calleeMap = calleeMap.AddCaller src.VData.PPoint.Address targ
+        let ess = { ess with CalleeMap = calleeMap }
+        let edges = getInterEdge src targ CallEdge edges
+        let edges = getFallthroughEdge src true edges
+        ess, edges
+      else ess, getInterEdge src targ InterJmpEdge edges
+
+  let private resolveVarEdge addr ppoint src tmpVarNo isCjmp ess edges =
+    if not (StateMap.contains ppoint ess.InStateMap) then
+      printfn "[Warning] State not found for %x" addr
+      ess, edges
+    else
+      let state = StateMap.read ppoint ess.InStateMap
+      resolveVarEdgeWithState addr src tmpVarNo isCjmp state ess edges
+
   let getEdges ess edges (src: Vertex<IRBasicBlock>) =
     let mask = Helper.computeJumpTargetMask ess.BinHandle
     let lastInstr = src.VData.LastInstruction
     let addr = lastInstr.Address
+    let ppoint = ProgramPoint(addr, src.VData.LastInsInfo.Stmts.Length - 1)
     match src.VData.GetLastStmt().S with
     | Jmp ({ E = Name s }) ->
       ess, getIntraEdge src s IntraJmpEdge edges
@@ -547,6 +588,9 @@ module BinEssence =
     | InterJmp ({ E = PCVar _ }, _) ->
       let edges = getInterEdge src addr InterJmpEdge edges
       ess, edges
+    // A case added for EVM.
+    | InterJmp ({ E = TempVar (_, tmpVarNo) }, _) ->
+      resolveVarEdge addr ppoint src tmpVarNo false ess edges
     | InterCJmp (_, { E = BinOp (BinOpType.ADD, _,
                                  { E = PCVar (_) }, { E = Num tBv }, _) },
                     { E = BinOp (BinOpType.ADD, _,
@@ -614,6 +658,11 @@ module BinEssence =
       let edges = getIndirectEdges ess.IndirectBranchMap src false edges
       let edges = getInterEdge src target InterCJmpTrueEdge edges
       ess, edges
+    // A case added for EVM.
+    | InterCJmp (_, { E = TempVar (_, tmpVarNo) }, { E = Num fbv }) ->
+      let fAddr = BitVector.toUInt64 fbv
+      let edges = getInterEdge src fAddr InterCJmpFalseEdge edges
+      resolveVarEdge addr ppoint src tmpVarNo true ess edges
     | InterCJmp (_, { E = PCVar _ }, _) ->
       src.VData.HasIndirectBranch <- true
       let edges = getIndirectEdges ess.IndirectBranchMap src false edges
@@ -655,8 +704,7 @@ module BinEssence =
       (* XXX: Update callInfo here *)
       if ess.IsNoReturn src true then ess, edges
       else ess, getFallthroughEdge src true edges
-    | InterJmp (_)
-    | InterCJmp (_) ->
+    | InterJmp (_) | InterCJmp (_) ->
       src.VData.HasIndirectBranch <- true
       ess, getIndirectEdges ess.IndirectBranchMap src false edges
     | SideEffect (BinIR.SysCall) when ess.IsNoReturn src false -> ess, edges
@@ -671,14 +719,14 @@ module BinEssence =
     | [] -> ess, elms
     | (srcPoint, dstPoint, e) :: edges when ProgramPoint.IsFake dstPoint ->
       let src = Map.find srcPoint ess.BBLStore.VertexMap
-      let bbl = IRBasicBlock ([||], dstPoint)
+      let bbl = IRBasicBlock ([||], dstPoint, 0UL)
       let dst, g = DiGraph.addVertex ess.SCFG bbl
       let g = DiGraph.addEdge g src dst e
       addEdgeLoop { ess with SCFG = g } elms edges
     | (srcPoint, dstPoint, e) :: edges ->
+      let src = Map.find srcPoint ess.BBLStore.VertexMap
       match Map.tryFind dstPoint ess.BBLStore.VertexMap with
       | Some dst ->
-        let src = Map.find srcPoint ess.BBLStore.VertexMap
         let g = DiGraph.addEdge ess.SCFG src dst e
         let ess = { ess with SCFG = g }
         if DiGraph.getSuccs g dst |> List.isEmpty then
@@ -704,7 +752,7 @@ module BinEssence =
           blkRange.Min <= addr && addr < blkRange.Max) insInfo.ReachablePPs
       Set.union pps pps') (Set.singleton fstLeader)
 
-  let private buildBlock ess leader addrs lastAddr elms edgeInfo =
+  let private buildBlock ess func leader addrs lastAddr elms edgeInfo =
     let last = ess.InstrMap.[lastAddr].Instruction
     let blkRange = AddrRange (leader, lastAddr + uint64 last.Length)
     let leader = ProgramPoint (leader, 0)
@@ -712,7 +760,7 @@ module BinEssence =
     let bbl =
       { BlkRange = blkRange; InstrAddrs = Set.ofList addrs; IRLeaders = pps }
     let bbls = addBBLInfo bbl ess.BBLStore
-    match buildVertices ess.InstrMap bbl with
+    match buildVertices ess.InstrMap func bbl with
     | Ok vertices ->
       let vertexMap, g =
         vertices
@@ -730,11 +778,20 @@ module BinEssence =
         connectEdges ess elms edges
     | Error _ -> Error ()
 
-  let internal parseNewBBL ess elms mode addr edgeInfo =
+  let internal runStackAnalysis ess sAddr blockAddrs =
+    let instrMap = ess.InstrMap
+    let inMap = ess.InStateMap
+    let outMap = ess.OutStateMap
+    match ess.BinHandle.ISA.Arch with
+    | Arch.EVM -> StackAnalysis.run sAddr blockAddrs instrMap inMap outMap
+    | _ -> ()
+
+  let internal parseNewBBL ess elms func mode addr edgeInfo =
     match InstrMap.parse ess.BinHandle mode ess.InstrMap ess.BBLStore addr with
-    | Ok (instrMap, block, lastAddr) ->
+    | Ok (instrMap, blockAddrs, lastAddr) ->
       let ess = { ess with InstrMap = instrMap }
-      buildBlock ess addr block lastAddr elms edgeInfo
+      runStackAnalysis ess addr blockAddrs
+      buildBlock ess func addr blockAddrs lastAddr elms edgeInfo
     | Error _ -> Error ()
 
   let rec private getBlockAddressesWithInstrMap ess addrs addr =
@@ -744,7 +801,7 @@ module BinEssence =
       struct (List.rev (addr :: addrs), ins.Address)
     else getBlockAddressesWithInstrMap ess (addr :: addrs) nextAddr
 
-  let internal updateCFGWithVertex ess elms addr mode =
+  let internal updateCFGWithVertex ess elms func addr mode =
     if bblExists ess.BBLStore addr then Ok <| struct (ess, elms)
     elif not <| isExecutableLeader ess.BinHandle addr then Error ()
     elif needSplitting ess.BBLStore addr then
@@ -753,10 +810,10 @@ module BinEssence =
     elif isIntruding ess.BBLStore addr then Error ()
     elif isKnownInstruction ess.InstrMap addr then
       let struct (block, lastAddr) = getBlockAddressesWithInstrMap ess [] addr
-      buildBlock ess addr block lastAddr elms None
-    else parseNewBBL ess elms mode addr None
+      buildBlock ess func addr block lastAddr elms None
+    else parseNewBBL ess elms func mode addr None
 
-  let internal updateCFGWithEdge ess elms src edge dst =
+  let internal updateCFGWithEdge ess elms func src edge dst =
     if bblExists ess.BBLStore dst then
       let ess, elms = addEdgeLoop ess elms [(src, ProgramPoint (dst, 0), edge)]
       Ok <| struct (ess, elms)
@@ -771,23 +828,50 @@ module BinEssence =
     elif isIntruding ess.BBLStore dst then Error ()
     elif isKnownInstruction ess.InstrMap dst then
       let struct (block, lastAddr) = getBlockAddressesWithInstrMap ess [] dst
-      buildBlock ess dst block lastAddr elms (Some (src, edge))
+      buildBlock ess func dst block lastAddr elms (Some (src, edge))
     else
       let mode = ess.BinHandle.Parser.OperationMode
-      parseNewBBL ess elms mode dst (Some (src, edge))
+      parseNewBBL ess elms func mode dst (Some (src, edge))
 
-  let rec internal updateCFG ess success = function
+  let private decideDstFunc ess (src: ProgramPoint) edge dstAddr =
+    if edge = CallEdge then dstAddr
+    else let srcVertex = Map.find src ess.BBLStore.VertexMap
+         srcVertex.VData.Entry
+
+  let private propagateState ess src edge dstAddr =
+    let inMap = ess.InStateMap
+    let outMap = ess.OutStateMap
+    let srcVertex = Map.find src ess.BBLStore.VertexMap
+    let srcAddr = srcVertex.VData.PPoint.Address
+    let lastIns = srcVertex.VData.LastInsInfo
+    let lastAddr = lastIns.Instruction.Address
+    let lastPp = ProgramPoint(lastAddr, lastIns.Stmts.Length - 1)
+    let dst = ProgramPoint(dstAddr, 0)
+    if ess.BinHandle.ISA.Arch = Arch.EVM then
+      match edge with
+      | CallEdge -> StateMap.update dst State.init inMap
+      | CallFallThroughEdge ->
+        match ess.CalleeMap.TryFindAddr (srcAddr) with
+        | None -> failwith "Missing entry from CalleeMap"
+        | Some targFunc ->
+          let liftOpt = StackLiftInfo.tryLookup targFunc ess.StackLiftInfo
+          StateMap.propagate true lastPp dst inMap outMap liftOpt
+      | _ -> StateMap.propagate false lastPp dst inMap outMap None
+
+  let rec internal updateCFG ess func success = function
     | CFGVertex (addr, mode) :: elms ->
-      match updateCFGWithVertex ess elms addr mode with
-      | Ok (ess, elms) -> updateCFG ess success elms
+      match updateCFGWithVertex ess elms func addr mode with
+      | Ok (ess, elms) -> updateCFG ess func success elms
       | Error () ->
-        if ess.IgnoreIllegal then updateCFG ess false elms
+        if ess.IgnoreIllegal then updateCFG ess func false elms
         else Error ess
     | CFGEdge (src, edge, dst) :: elms ->
-      match updateCFGWithEdge ess elms src edge dst with
-      | Ok (ess, elms) -> updateCFG ess success elms
+      propagateState ess src edge dst
+      let func = decideDstFunc ess src edge dst
+      match updateCFGWithEdge ess elms func src edge dst with
+      | Ok (ess, elms) -> updateCFG ess func success elms
       | Error () ->
-        if ess.IgnoreIllegal then updateCFG ess false elms
+        if ess.IgnoreIllegal then updateCFG ess func false elms
         else Error ess
     | [] ->
       if success then Ok ess
@@ -795,9 +879,10 @@ module BinEssence =
 
   [<CompiledName("AddEntry")>]
   let addEntry ess (addr, mode) =
-    let ess =
-      { ess with CalleeMap = ess.CalleeMap.AddEntry addr }
-    match updateCFG ess true [ CFGVertex (addr, mode) ] with
+    let ess = { ess with CalleeMap = ess.CalleeMap.AddEntry addr }
+    let ppoint = ProgramPoint(addr, 0)
+    StateMap.update ppoint State.init ess.InStateMap
+    match updateCFG ess addr true [ CFGVertex (addr, mode) ] with
     | Ok ess -> Ok ess
     | Error ess -> Error ess
 
@@ -814,7 +899,7 @@ module BinEssence =
   [<CompiledName("AddEdge")>]
   let addEdge ess src dst edgeKind =
     let edgeInfo = [ CFGEdge (ProgramPoint (src, 0), edgeKind, dst) ]
-    match updateCFG ess true edgeInfo with
+    match updateCFG ess 0UL true edgeInfo with
     | Ok ess -> Ok ess
     | Error _ -> Error ess
 
@@ -848,13 +933,15 @@ module BinEssence =
       List.map (fun addr ->
         if addr &&& 1UL = 1UL then addr - 1UL, ArchOperationMode.ThumbMode
         else addr, ArchOperationMode.ARMMode) entries
-    | _ ->
-      List.map (fun addr -> addr, ArchOperationMode.NoMode) entries
+    | _ -> List.map (fun addr -> addr, ArchOperationMode.NoMode) entries
 
   let private initialize hdl ignoreIllegal =
     let noretInfo = NoReturnInfo.Init Map.empty Set.empty
     { BinHandle = hdl
       InstrMap = InstrMap ()
+      InStateMap = StateMap ()
+      OutStateMap = StateMap ()
+      StackLiftInfo = StackLiftInfo ()
       BBLStore = BBLStore.Init ()
       CalleeMap = CalleeMap (hdl)
       SCFG = IRCFG.init PersistentGraph

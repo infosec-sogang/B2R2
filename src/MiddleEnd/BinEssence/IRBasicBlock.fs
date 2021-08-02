@@ -30,7 +30,7 @@ open B2R2.MiddleEnd.BinGraph
 
 /// A basic block that consists of IR (LowUIR) statements. It contains all the
 /// InstructionInfo of the basic block.
-type IRBasicBlock (instrs: InstructionInfo [], point: ProgramPoint) =
+type IRBasicBlock (instrs: InstructionInfo [], point: ProgramPoint, f: Addr) =
   inherit BasicBlock (point)
 
   let mutable hasIndirectBranch = false
@@ -39,6 +39,9 @@ type IRBasicBlock (instrs: InstructionInfo [], point: ProgramPoint) =
   /// an SCFG.
   member __.HasIndirectBranch
     with get () = hasIndirectBranch and set (v) = hasIndirectBranch <- v
+
+  /// Address of function entry that this basic block belongs to.
+  member __.Entry = f
 
   /// The first instruction of the basic block.
   member __.FirstInstruction =

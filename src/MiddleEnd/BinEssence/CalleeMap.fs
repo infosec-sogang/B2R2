@@ -92,6 +92,11 @@ type CalleeMap (hdl, ?linkMap, ?strCalleeMap, ?addrCalleeMap, ?callerMap) =
   member __.Find (name) =
     Map.tryFind name strCalleeMap
     |> Option.bind (fun addr -> Map.tryFind addr addrCalleeMap)
+  member __.TryFindAddr(addr) =
+    match Map.tryFind addr callerMap with
+    | None -> None
+    | Some x -> if Set.count x > 0 then Some (Set.minElement x) else None
+
   member __.Get (addr) = Map.find addr addrCalleeMap
 
   member __.InternalCallees with get () =
