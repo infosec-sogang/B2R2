@@ -174,7 +174,7 @@ module InstrMap =
       with
         | e ->
 #if DEBUG
-          printfn "Not Implemented IR starting from %x" leaderAddr
+          printfn "Address %x raised exception" leaderAddr
           printfn "%s" <| e.ToString ()
 #endif
           Error ()
