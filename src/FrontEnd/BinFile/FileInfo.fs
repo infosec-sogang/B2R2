@@ -106,6 +106,14 @@ type FileInfo () =
   abstract member TranslateAddress: addr: Addr -> int
 
   /// <summary>
+   ///   Add a symbol for address.
+   /// </summary>
+   /// <returns>
+   ///   Does not return a value.
+   /// </returns>
+   abstract member AddSymbol: Addr -> Symbol -> unit
+
+  /// <summary>
   ///   Return a list of all the symbols from the binary.
   /// </summary>
   /// <returns>
