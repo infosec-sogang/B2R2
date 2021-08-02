@@ -358,7 +358,7 @@ let translate insInfo (ctxt: TranslationContext) =
   | ADDRESS -> callExternFunc insInfo ctxt "address" 0 true
   | BALANCE -> callExternFunc insInfo ctxt "balance" 1 true
   | ORIGIN -> callExternFunc insInfo ctxt "tx.origin" 0 true
-  | CALLER -> callExternFunc insInfo ctxt "msg.caller" 0 true
+  | CALLER -> callExternFunc insInfo ctxt "msg.sender" 0 true
   | CALLVALUE -> callExternFunc insInfo ctxt "msg.value" 0 true
   | CALLDATALOAD -> callExternFunc insInfo ctxt "msg.data" 1 true
   | CALLDATASIZE -> callExternFunc insInfo ctxt "msg.data.size" 0 true
