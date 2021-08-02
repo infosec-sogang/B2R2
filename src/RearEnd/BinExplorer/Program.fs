@@ -67,16 +67,22 @@ type BinExplorerOpts (isa) =
   /// Enable branch recovery analysis.
   member val EnableGapComp = false with get, set
 
+  /// ABI file for EVM byte code.
+  member val EVMAbiFile = "" with get, set
+
   /// List of analyses to perform.
-  member __.GetAnalyses () =
-    [ yield LibcAnalysis () :> IAnalysis
-      yield EVMCodeCopyAnalysis () :> IAnalysis
-      if __.EnableNoReturn then
-        yield NoReturnAnalysis () :> IAnalysis
-      if __.EnableBranchRecovery then
-        yield BranchRecovery (__.EnableNoReturn) :> IAnalysis
-      if __.EnableGapComp then
-        yield SpeculativeGapCompletion (__.EnableNoReturn) :> IAnalysis ]
+  member __.GetAnalyses arch =
+    if arch = Arch.EVM then
+      [ yield EVMCodeCopyAnalysis () :> IAnalysis
+        yield EVMTrampolineAnalysis(__.EVMAbiFile) :> IAnalysis ]
+    else
+      [ yield LibcAnalysis () :> IAnalysis
+        if __.EnableNoReturn then
+          yield NoReturnAnalysis () :> IAnalysis
+        if __.EnableBranchRecovery then
+          yield BranchRecovery (__.EnableNoReturn) :> IAnalysis
+        if __.EnableGapComp then
+          yield SpeculativeGapCompletion (__.EnableNoReturn) :> IAnalysis ]
 
   static member private ToThis (opts: CmdOpts) =
     match opts with
@@ -149,6 +155,13 @@ type BinExplorerOpts (isa) =
       descr = "Disable speculative gap completion.",
       callback = cb, long = "--disable-gap-completion")
 
+  static member OptEVMAbiFile () =
+    let cb (opts: #CmdOpts) (arg : string []) =
+      (BinExplorerOpts.ToThis opts).EVMAbiFile <- arg.[0]; opts
+    CmdOpts.New (
+      descr = "ABI file path for EVM bytecode.",
+      extra = 1, callback = cb, long = "--evmabi")
+
 let spec =
   [ CmdOpts.New ( descr="[Input Configuration]\n", dummy=true )
 
@@ -173,6 +186,7 @@ let spec =
 
     BinExplorerOpts.OptReadLine ()
     BinExplorerOpts.OptJsonDumpDir ()
+    BinExplorerOpts.OptEVMAbiFile ()
     CmdOpts.OptVerbose ()
     CmdOpts.OptHelp ()
 
@@ -183,7 +197,7 @@ let spec =
 
 let buildGraph (opts: BinExplorerOpts) handle =
   BinEssence.init handle
-  |> Reclaimer.run (opts.GetAnalyses ())
+  |> Reclaimer.run (opts.GetAnalyses handle.ISA.Arch)
 
 let startGUI (opts: BinExplorerOpts) arbiter =
   HTTPServer.startServer arbiter opts.IP opts.Port opts.Verbose
