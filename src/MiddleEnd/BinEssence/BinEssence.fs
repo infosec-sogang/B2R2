@@ -84,6 +84,9 @@ type BinEssence = {
   NoReturnInfo: NoReturnInfo
   IndirectBranchMap: Map<Addr, IndirectBranchInfo>
   IgnoreIllegal: bool
+  // EVM-specific data collection.
+  SigToName: Dictionary<uint32, string>
+  SigToAddr: Dictionary<uint32, Addr>
 }
 with
   member __.IsNoReturn (src: Vertex<IRBasicBlock>) isCall =
@@ -490,11 +493,7 @@ module BinEssence =
   let private updateStackLift (src: Vertex<IRBasicBlock>) state ess =
     let func = src.VData.Entry
     match State.tryResolveStackPtr state with
-    | Some x ->
-      // For most inlined functions, we observe SP <= 0x20.
-      if x > EVM_WORDSIZE then
-        printfn "[Warning] Unusual stack lift (%s) of %x" (bigIntToStr x) func
-      StackLiftInfo.update func x ess.StackLiftInfo
+    | Some x -> StackLiftInfo.update func x ess.StackLiftInfo
     | None -> printfn "[Warning] Unresolved stack lift of %x" func
 
   let private resolveVarEdgeWithState addr src tmpNo isCjmp state ess edges =
@@ -947,7 +946,9 @@ module BinEssence =
       SCFG = IRCFG.init PersistentGraph
       NoReturnInfo = noretInfo
       IndirectBranchMap = Map.empty
-      IgnoreIllegal = defaultArg ignoreIllegal true }
+      IgnoreIllegal = defaultArg ignoreIllegal true
+      SigToAddr = new Dictionary<uint32, Addr>()
+      SigToName = new Dictionary<uint32, string>() }
 
   [<CompiledName("Init")>]
   let init hdl =
