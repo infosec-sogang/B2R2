@@ -145,8 +145,8 @@ module ARMap =
     | node -> Node node
 
   [<CompiledName("Remove")>]
-  let remove range tree =
-    del true range tree |> toBlack
+  let remove k tree =
+    del true k tree |> toBlack
 
   [<CompiledName("RemoveAddr")>]
   let removeAddr addr tree =
@@ -209,21 +209,22 @@ module ARMap =
     | Node (_, k, v, l, r) -> iter fn l; fn k v; iter fn r
 
   [<CompiledName("Fold")>]
-  let rec fold fn acc = function
+  let rec fold fn acc tree =
+    match tree with
     | Leaf _ -> acc
     | Node (_, k, v, l, r) -> let acc = fold fn acc l
                               let acc = fn acc k v
                               fold fn acc r
 
   [<CompiledName("GetOverlaps")>]
-  let getOverlaps (k: AddrRange) tree =
+  let getOverlaps (range: AddrRange) tree =
     let rec loop acc = function
       | Leaf _ -> acc
       | Node (_, k', v', l, r) ->
-        let acc = if k.Min < k'.Min then loop acc l else acc
+        let acc = if range.Min < k'.Min then loop acc l else acc
         let acc =
-          if k.Max <= k'.Min || k.Min >= k'.Max then acc
+          if range.Max <= k'.Min || range.Min >= k'.Max then acc
           else (k', v') :: acc
-        let acc = if k.Max > k'.Max then loop acc r else acc
+        let acc = if range.Max > k'.Max then loop acc r else acc
         acc
     loop [] tree

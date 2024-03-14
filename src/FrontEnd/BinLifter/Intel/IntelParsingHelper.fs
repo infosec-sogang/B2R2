@@ -4303,7 +4303,6 @@ module internal ParsingHelper = begin
     | 0xECuy -> parseVEX rhlp nor0FEC vex0FEC
     | 0xEDuy -> parseVEX rhlp nor0FED vex0FED
     | 0xEFuy -> parseEVEX rhlp nor0FEF vex0FEF evex0FEFW0 evex0FEFW1
-    | 0xEFuy -> parseVEX rhlp nor0FEF vex0FEF
     | 0xF0uy -> parseVEX rhlp nor0FF0 vex0FF0
     | 0xF1uy -> parseVEX rhlp nor0FF1 vex0FF1
     | 0xF2uy -> parseVEX rhlp nor0FF2 vex0FF2

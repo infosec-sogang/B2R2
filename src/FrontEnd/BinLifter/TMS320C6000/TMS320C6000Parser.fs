@@ -1268,7 +1268,6 @@ let getCtrlReg crHi crLo =
   | 0b00000u, 0b11001u -> R.DIER
   | 0b00000u, 0b10001u -> R.DNUM
   | 0b00000u, 0b11101u -> R.ECR
-  | 0b00000u, 0b11101u -> R.EFR
   | 0b00000u, 0b10010u -> R.FADCR
   | 0b00000u, 0b10011u -> R.FAUCR
   | 0b00000u, 0b10100u -> R.FMCR
@@ -1919,8 +1918,6 @@ let private parseCase110 bin =
   | 0b1111110u -> parseSc5XUiUi bin Op.OR (getLUnit s x)
   | 0b1111111u -> parseUiXUiUi bin Op.OR (getLUnit s x)
   (* parseLUnitNonCond, D-3 *)
-  | 0b0001110u -> parseSiXSiDi bin Op.SADDSUB (getLUnit s x)
-  | 0b0001111u -> parseSiXSiDi bin Op.SADDSUB2 (getLUnit s x)
   | 0b0110011u -> parseSiXSiDi bin Op.DPACKX2 (getLUnit s x)
   | 0b0110100u -> parseSiXSiDi bin Op.DPACK2 (getLUnit s x)
   | 0b0110110u -> parseSiXSiDi bin Op.SHFL3 (getLUnit s x)

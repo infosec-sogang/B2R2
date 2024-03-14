@@ -746,8 +746,6 @@ let parseAdvSIMDMisc bin =
     Op.VMOVN, getOneDtX bin, p2Oprs bin chkUndefAD (getRegAC, getRegAD)
   | 2u, 4u, 1u | 2u, 5u, _ ->
     Op.VQMOVN, getOneDtY bin, p2Oprs bin chkUndefAD (getRegAC, getRegAD)
-  | 2u, 5u, _ ->
-    Op.VQMOVN, getOneDtY bin, p2Oprs bin chkUndefAD (getRegAC, getRegAD)
   | 2u, 6u, 0u ->
     Op.VSHLL, getOneDtU bin, p2Oprs bin chkUndefAD (getRegAC, getRegAD)
   | 2u, 7u, 0u ->
@@ -768,8 +766,6 @@ let parseAdvSIMDMisc bin =
   | 2u, 13u, _ ->
     Op.VRINTM, getOneDtAA (), p2Oprs bin chkUndefAF (getRegX, getRegZ)
   | 2u, 14u, 1u -> raise UnallocatedException
-  | 2u, 15u, _ ->
-    Op.VRINTP, getOneDtAA (), p2Oprs bin chkUndefAF (getRegX, getRegZ)
   | 2u, 15u, _ ->
     Op.VRINTP, getOneDtAA (), p2Oprs bin chkUndefAF (getRegX, getRegZ)
   | 3u, b, _ when b &&& 14u = 0u ->
