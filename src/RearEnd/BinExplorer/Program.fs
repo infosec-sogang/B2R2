@@ -55,6 +55,9 @@ type BinExplorerOpts (isa) =
   /// this option.
   member val ISA = isa with get, set
 
+  /// Enable EVM code copy analysis and following trampoline analysis.
+  member val EnableCodeCopyAnalysis = true with get, set
+
   /// Enable readline mode or not.
   member val EnableReadLine = true with get, set
 
@@ -73,8 +76,10 @@ type BinExplorerOpts (isa) =
   /// List of analyses to perform.
   member __.GetAnalyses arch =
     if arch = Arch.EVM then
-      [ yield EVMCodeCopyAnalysis () :> IAnalysis
-        yield EVMTrampolineAnalysis(__.EVMAbiFile) :> IAnalysis ]
+      if __.EnableCodeCopyAnalysis then
+        [ yield EVMCodeCopyAnalysis () :> IAnalysis
+          yield EVMTrampolineAnalysis(__.EVMAbiFile) :> IAnalysis ]
+      else []
     else
       [ yield LibcAnalysis () :> IAnalysis
         if __.EnableNoReturn then
@@ -134,6 +139,13 @@ type BinExplorerOpts (isa) =
       descr = "Directory name to dump CFG json (no dump if empty)",
       extra = 1, callback = cb, short = "-j", long = "--jsondir")
 
+  static member OptDisableCodeCopy () =
+    let cb (opts: #CmdOpts) (_arg : string []) =
+      (BinExplorerOpts.ToThis opts).EnableCodeCopyAnalysis <- false; opts
+    CmdOpts.New (
+      descr = "Disable code copy analysis for EVM",
+      callback = cb, long = "--disable-codecopy")
+
   static member OptDisableNoReturn () =
     let cb (opts: #CmdOpts) (_arg : string []) =
       (BinExplorerOpts.ToThis opts).EnableNoReturn <- false; opts
@@ -178,6 +190,7 @@ let spec =
 
     CmdOpts.New ( descr="\n[Analyses]\n", dummy=true )
 
+    BinExplorerOpts.OptDisableCodeCopy ()
     BinExplorerOpts.OptDisableNoReturn ()
     BinExplorerOpts.OptDisableBranchRecovery ()
     BinExplorerOpts.OptDisableSpeculativeGapCompletion ()
