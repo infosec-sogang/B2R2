@@ -563,7 +563,7 @@ module BranchRecoveryHelper =
       let br = { br with RecoveryStatus = Done }
       ess, { info with JumpTables = Map.add br.InsAddr br info.JumpTables }
 
-  let inline private finalizeRecovery noret ess hint info =
+  let private finalizeRecovery noret ess hint info =
     let ess, info = Map.fold restoreJmpTbl (ess, info) info.JumpTables
     let ess, hint = runNoReturn noret ess hint info.FunctionEntry
     ess, hint, info

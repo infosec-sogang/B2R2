@@ -1753,7 +1753,7 @@ let setcc ins insLen ctxt =
   !!ir (dstAssign oprSize dst cond)
   !>ir insLen
 
-let inline shiftDblPrec ins insLen ctxt fnDst fnSrc isShl =
+let shiftDblPrec ins insLen ctxt fnDst fnSrc isShl =
   let ir = IRBuilder (16)
   let struct (dst, src, cnt) = transThreeOprs ins insLen ctxt
   let oprSize = getOperationSize ins
