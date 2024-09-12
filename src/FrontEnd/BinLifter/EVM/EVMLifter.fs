@@ -323,8 +323,12 @@ let ret insInfo ctxt =
 
 let selfdestruct insInfo ctxt =
   let builder = new IRBuilder (8)
-  popFromStack ctxt builder |> ignore
-  sideEffects insInfo Terminate
+  startMark insInfo builder
+  let addr = popFromStack ctxt builder
+  let expr = AST.app "selfdestruct" [addr] OperationSize.regType
+  builder <! ((builder.NewTempVar OperationSize.regType) := expr)
+  builder <! AST.sideEffect Terminate
+  endMark insInfo builder
 
 let translate insInfo (ctxt: TranslationContext) =
   match insInfo.Opcode with
