@@ -6784,6 +6784,16 @@ module internal ParsingHelper = begin
 
   let pTwoByteOp span (rhlp: ReadHelper) byte =
     match byte with
+    | 0x01uy ->
+      let modrm = rhlp.PeekByte span
+      if   modrm = 0xFAuy || modrm = 0xFBuy then
+          rhlp.ReadByte span |> ignore
+          render span rhlp NOP SzCond.Nor OD.No SZ.Def
+      else
+          let regBits = int ((modrm >>> 3) &&& 0b111uy)
+          let struct (op, opndKind, sz, szCond) =
+              parseGrp7OpKind rhlp modrm regBits
+          render span rhlp op szCond opndKind sz   
     | 0x02uy ->
       if rhlp.VEXInfo.IsSome then raise ParsingFailureException
       else render span rhlp LAR SzCond.Nor OD.GprRm SZ.WV
