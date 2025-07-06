@@ -134,7 +134,8 @@ with
          analysis failed. *)
       System.Console.Error.WriteLine
         $"{this.FunctionAddress:x} overlapped with {nextFnAddr:x}"
-      Terminator.impossible ()
+      //Terminator.impossible ()
+      None
 #else
       None (* Ignore this error in release mode. *)
 #endif
